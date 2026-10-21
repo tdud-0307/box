@@ -13,29 +13,34 @@ st.caption("영화진흥위원회(KOBIS) Open API 기반 데이터입니다.")
 
 # 1. 한국 시간(KST) 기준 '어제' 날짜 계산 함수
 def get_yesterday_kst():
-    # 배포 서버의 시계가 해외 기준일 수 있으므로 Asia/Seoul 타임존을 명시 적용
+    # 배포 서버 시계가 해외 기준일 수 있으므로 Asia/Seoul 타임존 명시 적용
     kst_tz = pytz.timezone("Asia/Seoul")
     now_kst = datetime.datetime.now(kst_tz)
     yesterday_kst = now_kst - datetime.timedelta(days=1)
-    # yyyymmdd 8자리 문자열 형식으로 변환 (예: '20261020')
+    # yyyymmdd 8자리 문자열 형식으로 변환
     return yesterday_kst.strftime("%Y%m%d")
 
 
 # 2. API 데이터 호출 함수
-@st.cache_data(ttl=3600)  # 1시간 동안 API 호출 결과를 캐싱하여 사용
+@st.cache_data(ttl=3600)  # 1시간 동안 API 호출 결과 캐싱
 def fetch_boxoffice_data(target_date):
-    # Streamlit Secrets(비밀 금고)에서 KOBIS API 키 불러오기
-    # .streamlit/secrets.toml 파일 또는 Streamlit Cloud Secrets에 설정 필요
-    api_key = st.secrets.get("KOBIS_KEY")
+    # Streamlit Secrets에서 안전하게 KOBIS API 키 불러오기
+    try:
+        api_key = st.secrets["KOBIS_KEY"]
+    except Exception:
+        return (
+            None,
+            "API 키(KOBIS_KEY)가 secrets에 설정되지 않았습니다. .streamlit/secrets.toml 파일 또는 Streamlit Cloud Secrets 설정을 확인해 주세요.",
+        )
 
     if not api_key:
-        return None, "API 키(KOBIS_KEY)가 secrets에 설정되지 않았습니다."
+        return None, "API 키가 비어 있습니다. 올바른 KOBIS_KEY를 입력해 주세요."
 
     url = f"https://www.kobis.or.kr/kobisopenapi/webservice/rest/boxoffice/searchDailyBoxOfficeList.json?key={api_key}&targetDt={target_date}"
 
     try:
         response = requests.get(url, timeout=10)
-        # HTTP 응답 상태 코드가 200(성공)이 아닌 경우
+        # HTTP 상태 코드가 200(성공)이 아닌 경우
         if response.status_code != 200:
             return (
                 None,
@@ -44,14 +49,14 @@ def fetch_boxoffice_data(target_date):
 
         data = response.json()
 
-        # KOBIS API 특성: 인증키 오류 등의 경우 faultInfo 개체가 반환됨
+        # KOBIS API 특성: 인증키 오류 등의 경우 faultInfo 객체가 반환됨
         if "faultInfo" in data:
             error_message = data["faultInfo"].get(
                 "message", "인증키 또는 API 요청 오류가 발생했습니다."
             )
             return (
                 None,
-                f"API 오류 발생: {error_message}\n(Secrets의 KOBIS_KEY 값을 확인해 주세요.)",
+                f"API 오류 발생: {error_message}\n(Secrets에 설정된 KOBIS_KEY 값이 올바른지 확인해 주세요.)",
             )
 
         # 박스오피스 목록 추출
@@ -149,7 +154,7 @@ else:
         "스크린수",
     ]
 
-    # 숫자 데이터 콤마(,) 서식 적용
+    # 표 출력
     st.dataframe(
         display_df,
         use_container_width=True,
