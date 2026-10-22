@@ -4,7 +4,7 @@ import pandas as pd
 import pytz
 import streamlit as st
 
-# 페이지 기본 설정 (타이틀, 레이아웃)
+# 페이지 기본 설정
 st.set_page_config(page_title="영화 박스오피스 순위", layout="wide")
 
 st.title("🎬 영화 박스오피스 검색")
@@ -19,10 +19,9 @@ def get_yesterday_kst_date():
     return yesterday_kst.date()
 
 
-# 한국 시간 기준 어제 날짜 구하기 (달력에서 선택할 수 있는 최대 날짜)
 max_selectable_date = get_yesterday_kst_date()
 
-# 사이드바 설정: 날짜 선택 달력만 제공
+# 사이드바 설정: 날짜 선택
 st.sidebar.header("⚙️ 설정")
 selected_date = st.sidebar.date_input(
     "📅 조회할 날짜 선택",
@@ -31,14 +30,12 @@ selected_date = st.sidebar.date_input(
     help="오늘 날짜는 아직 집계 전이므로 어제 날짜까지만 선택할 수 있습니다.",
 )
 
-# API 요청을 위한 YYYYMMDD 문자열 변환
 target_date_str = selected_date.strftime("%Y%m%d")
 
 
-# 2. API 데이터 호출 함수
+# 2. 박스오피스 API 데이터 호출 함수
 @st.cache_data(ttl=3600)
 def fetch_boxoffice_data(target_date):
-    # 비밀 금고(st.secrets)에서 API 키 불러오기
     try:
         api_key = st.secrets["KOBIS_KEY"]
     except Exception:
@@ -62,7 +59,6 @@ def fetch_boxoffice_data(target_date):
 
         data = response.json()
 
-        # 인증키 오류 발생 시 처리
         if "faultInfo" in data:
             error_message = data["faultInfo"].get(
                 "message", "인증키 또는 API 요청 오류가 발생했습니다."
@@ -75,7 +71,6 @@ def fetch_boxoffice_data(target_date):
         box_office_result = data.get("boxOfficeResult", {})
         daily_list = box_office_result.get("dailyBoxOfficeList", [])
 
-        # 영화 목록이 비어있는 경우
         if not daily_list:
             return None, "그날은 아직 집계 전입니다."
 
@@ -104,17 +99,17 @@ else:
     df = pd.DataFrame(daily_movies)
 
     # 문자열 숫자를 수치형(int)으로 변환
-    numeric_cols = ["rank", "rankInten", "audiCnt", "audiAcc", "scrnCnt"]
+    numeric_cols = ["rank", "rankInten", "audiCnt", "audiAcc", "scrnCnt", "showCnt"]
     for col in numeric_cols:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # 3. 누적관객 100만 명 이상 영화명 옆에 🏆 이모지 붙이기
+    # 100만 관객 트로피 표시
     df["movieNm_display"] = df.apply(
         lambda row: f"🏆 {row['movieNm']}" if row["audiAcc"] >= 1000000 else row["movieNm"],
         axis=1,
     )
 
-    # 4. 전날 대비 순위 증감(rankInten) 화살표 표시
+    # 순위 증감 화살표
     def format_rank_inten(val):
         if val > 0:
             return f"🔺 +{val}"
@@ -125,7 +120,7 @@ else:
 
     df["rankInten_display"] = df["rankInten"].apply(format_rank_inten)
 
-    # 5. 1위 영화 지표 카드 (st.metric) 3개 크게 출력
+    # 3. 1위 영화 지표 카드
     st.markdown("---")
     st.subheader("🥇 해당 일자 1위 영화")
 
@@ -141,19 +136,17 @@ else:
 
     st.markdown("---")
 
-    # 6. 관객수 상위 5편 막대그래프 시각화
+    # 4. 관객수 상위 5개 막대그래프
     st.subheader("📊 관객수 상위 5개 영화")
-    top5_df = df.head(5)[["movieNm", "audiCnt"]].copy()
-    top5_df = top5_df.rename(
-        columns={"movieNm": "영화명", "audiCnt": "일일 관객수"}
-    )
+    top5_df = df.sort_values(by="audiCnt", ascending=False).head(5)[["movieNm", "audiCnt"]].copy()
+    top5_df = top5_df.rename(columns={"movieNm": "영화명", "audiCnt": "일일 관객수"})
     top5_df = top5_df.set_index("영화명")
 
     st.bar_chart(top5_df)
 
     st.markdown("---")
 
-    # 7. 전체 TOP 10 순위 표 출력 (순위 증감, 트로피 이모지 포함)
+    # 5. 전체 TOP 10 순위 표 출력
     st.subheader("📋 전체 순위표")
 
     display_df = df[
@@ -186,5 +179,48 @@ else:
             "관객수": st.column_config.NumberColumn(format="%d명"),
             "누적관객": st.column_config.NumberColumn(format="%d명"),
             "스크린수": st.column_config.NumberColumn(format="%d개"),
+        },
+    )
+
+    # 6. 순위 표 밑에 KOBIS 데이터 기반 효율성 분석 표 추가
+    st.markdown("---")
+    st.subheader("📈 상영 및 관객 효율성 분석 (순위 표 하단)")
+
+    # 파생 지표 계산
+    total_top10_audi = df["audiCnt"].sum()
+
+    analysis_df = df.copy()
+    # 스크린당 관객수 계산 (0으로 나누기 방지)
+    analysis_df["screen_efficiency"] = (analysis_df["audiCnt"] / analysis_df["scrnCnt"].replace(0, 1)).round(1)
+    # 회당 평균 관객수 계산
+    analysis_df["show_efficiency"] = (analysis_df["audiCnt"] / analysis_df["showCnt"].replace(0, 1)).round(1)
+    # 관객 점유율 계산 (%)
+    analysis_df["share"] = ((analysis_df["audiCnt"] / total_top10_audi) * 100).round(1)
+
+    # 표시용 데이터프레임 정리
+    calc_display_df = analysis_df[
+        ["rank", "movieNm", "scrnCnt", "showCnt", "screen_efficiency", "show_efficiency", "share"]
+    ].copy()
+
+    calc_display_df.columns = [
+        "순위",
+        "영화명",
+        "스크린수",
+        "상영횟수",
+        "스크린당 관객수",
+        "1회 상영당 관객수",
+        "TOP10 관객 점유율",
+    ]
+
+    st.dataframe(
+        calc_display_df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "스크린수": st.column_config.NumberColumn(format="%d개"),
+            "상영횟수": st.column_config.NumberColumn(format="%d회"),
+            "스크린당 관객수": st.column_config.NumberColumn(format="%.1f명"),
+            "1회 상영당 관객수": st.column_config.NumberColumn(format="%.1f명"),
+            "TOP10 관객 점유율": st.column_config.NumberColumn(format="%.1f%%"),
         },
     )
