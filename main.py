@@ -2,10 +2,29 @@ import datetime
 import requests
 import pandas as pd
 import pytz
+import altair as alt
 import streamlit as st
 
 # 페이지 기본 설정
 st.set_page_config(page_title="영화 박스오피스 순위", layout="wide")
+
+# 영화관/박스오피스 대표 시네마 레드 컬러 정의
+CINEMA_RED = "#E50914"
+
+# 스타일 커스텀: 대표 색상을 활용한 메트릭 카드의 빨간 포인트 선 적용
+st.markdown(
+    f"""
+    <style>
+    div[data-testid="stMetric"] {{
+        border-left: 4px solid {CINEMA_RED};
+        padding-left: 12px;
+        background-color: rgba(229, 9, 20, 0.03);
+        border-radius: 4px;
+    }}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 st.title("🎬 영화 박스오피스 검색")
 st.caption("영화진흥위원회(KOBIS) Open API 기반 데이터입니다.")
@@ -101,126 +120,4 @@ else:
     # 문자열 숫자를 수치형(int)으로 변환
     numeric_cols = ["rank", "rankInten", "audiCnt", "audiAcc", "scrnCnt", "showCnt"]
     for col in numeric_cols:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    # 100만 관객 트로피 표시
-    df["movieNm_display"] = df.apply(
-        lambda row: f"🏆 {row['movieNm']}" if row["audiAcc"] >= 1000000 else row["movieNm"],
-        axis=1,
-    )
-
-    # 순위 증감 화살표
-    def format_rank_inten(val):
-        if val > 0:
-            return f"🔺 +{val}"
-        elif val < 0:
-            return f"🔻 {val}"
-        else:
-            return "-"
-
-    df["rankInten_display"] = df["rankInten"].apply(format_rank_inten)
-
-    # 3. 1위 영화 지표 카드
-    st.markdown("---")
-    st.subheader("🥇 해당 일자 1위 영화")
-
-    top_movie = df.iloc[0]
-
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric(label="영화명", value=str(top_movie["movieNm_display"]))
-    with col2:
-        st.metric(label="일일 관객수", value=f"{top_movie['audiCnt']:,} 명")
-    with col3:
-        st.metric(label="누적 관객수", value=f"{top_movie['audiAcc']:,} 명")
-
-    st.markdown("---")
-
-    # 4. 관객수 상위 5개 막대그래프
-    st.subheader("📊 관객수 상위 5개 영화")
-    top5_df = df.sort_values(by="audiCnt", ascending=False).head(5)[["movieNm", "audiCnt"]].copy()
-    top5_df = top5_df.rename(columns={"movieNm": "영화명", "audiCnt": "일일 관객수"})
-    top5_df = top5_df.set_index("영화명")
-
-    st.bar_chart(top5_df)
-
-    st.markdown("---")
-
-    # 5. 전체 TOP 10 순위 표 출력
-    st.subheader("📋 전체 순위표")
-
-    display_df = df[
-        [
-            "rank",
-            "rankInten_display",
-            "movieNm_display",
-            "openDt",
-            "audiCnt",
-            "audiAcc",
-            "scrnCnt",
-        ]
-    ].copy()
-
-    display_df.columns = [
-        "순위",
-        "순위 증감",
-        "영화명",
-        "개봉일",
-        "관객수",
-        "누적관객",
-        "스크린수",
-    ]
-
-    st.dataframe(
-        display_df,
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "관객수": st.column_config.NumberColumn(format="%d명"),
-            "누적관객": st.column_config.NumberColumn(format="%d명"),
-            "스크린수": st.column_config.NumberColumn(format="%d개"),
-        },
-    )
-
-    # 6. 순위 표 밑에 KOBIS 데이터 기반 효율성 분석 표 추가
-    st.markdown("---")
-    st.subheader("📈 상영 및 관객 효율성 분석 (순위 표 하단)")
-
-    # 파생 지표 계산
-    total_top10_audi = df["audiCnt"].sum()
-
-    analysis_df = df.copy()
-    # 스크린당 관객수 계산 (0으로 나누기 방지)
-    analysis_df["screen_efficiency"] = (analysis_df["audiCnt"] / analysis_df["scrnCnt"].replace(0, 1)).round(1)
-    # 회당 평균 관객수 계산
-    analysis_df["show_efficiency"] = (analysis_df["audiCnt"] / analysis_df["showCnt"].replace(0, 1)).round(1)
-    # 관객 점유율 계산 (%)
-    analysis_df["share"] = ((analysis_df["audiCnt"] / total_top10_audi) * 100).round(1)
-
-    # 표시용 데이터프레임 정리
-    calc_display_df = analysis_df[
-        ["rank", "movieNm", "scrnCnt", "showCnt", "screen_efficiency", "show_efficiency", "share"]
-    ].copy()
-
-    calc_display_df.columns = [
-        "순위",
-        "영화명",
-        "스크린수",
-        "상영횟수",
-        "스크린당 관객수",
-        "1회 상영당 관객수",
-        "TOP10 관객 점유율",
-    ]
-
-    st.dataframe(
-        calc_display_df,
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "스크린수": st.column_config.NumberColumn(format="%d개"),
-            "상영횟수": st.column_config.NumberColumn(format="%d회"),
-            "스크린당 관객수": st.column_config.NumberColumn(format="%.1f명"),
-            "1회 상영당 관객수": st.column_config.NumberColumn(format="%.1f명"),
-            "TOP10 관객 점유율": st.column_config.NumberColumn(format="%.1f%%"),
-        },
-    )
+        df[col] = pd.to_numeric(df
